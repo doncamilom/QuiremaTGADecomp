@@ -1,3 +1,5 @@
+#Utilities file for main program
+
 #Imports
 from numpy import mean,std,array
 from numpy.random import rand
