@@ -30,7 +30,6 @@ def weigh(df,prob,Range=(0.23,1.0)):
         if rand()>prob:
             reduce.drop(i,inplace=True)
 
-    print("{} points dropped".format(init_shape-reduce.shape[0]))
     return reduce.merge(n_red,how='outer').drop(columns='index').sort_values(by='x')
 
 #Load 1 dataset
@@ -56,6 +55,7 @@ def LoadDF(name,dom=(210,400),weight=(-0.3,1.6,0.3)):
 
     return dfR,norm_prms
 
+        
 #Create custom layer. This layer computes our function. This is done so we can compile a TF model -> easy to train
 from tensorflow import constant_initializer
 from keras.layers import Input,Dense,Layer
@@ -228,7 +228,7 @@ class EndOnNaN(callbacks.Callback):
             self.model.stop_training = True
             
             
-def Optimize(df,hyper,peak,lr=5e-2,epochs=100,v=1,weights=0):
+def Optimize(df,hyper,peak,lr=5e-2,epochs=100,v=1,weights=0,where='/tmp/W.hdf5'):
     """df: training data
     hyper: Matrix with hyperparameters. Contains, as rows: Ss,dev,posit,ks,As,freezeS
     Ss: x point around which curves are to be centered
@@ -240,7 +240,8 @@ def Optimize(df,hyper,peak,lr=5e-2,epochs=100,v=1,weights=0):
     lr: learning rate
     epochs: number of epochs
     v: verbosity of output while training
-    weights: load pre-trained parameters to restart optimization from there"""
+    weights: load pre-trained parameters to restart optimization from there
+    where: /path/to/file where model is to be stored. Default is /tmp/W.hdf5"""
     
     sess=Session()
     with sess.as_default():
@@ -265,7 +266,7 @@ def Optimize(df,hyper,peak,lr=5e-2,epochs=100,v=1,weights=0):
             rlr = callbacks.ReduceLROnPlateau(monitor='loss', factor=0.5,patience=20,min_delta=0.004,
                                                   min_lr=2.0e-7, mode='min', verbose=v)
             ton = EndOnNaN()
-            chk = callbacks.ModelCheckpoint('/tmp/W.hdf5', monitor='loss',save_best_only=True,
+            chk = callbacks.ModelCheckpoint(where, monitor='loss',save_best_only=True,
                                                 mode='min', period=1)
             earlyStp = callbacks.EarlyStopping(monitor='loss', min_delta=0.000003, 
                                                    patience=50, verbose=1, mode='min')
@@ -273,7 +274,7 @@ def Optimize(df,hyper,peak,lr=5e-2,epochs=100,v=1,weights=0):
             hist=model.fit(df.x,df.y,epochs=epochs, batch_size=128,verbose=v,
                            callbacks=[rlr,ton,chk,earlyStp])
 
-            model.load_weights('/tmp/W.hdf5') #Load weights (best of all epochs)
+            model.load_weights(where) #Load weights (best of all epochs)
 
             #Extract optimized weights into a dictionary
             BroutePrms = model.layers[1].get_weights()
@@ -281,7 +282,7 @@ def Optimize(df,hyper,peak,lr=5e-2,epochs=100,v=1,weights=0):
             return prms,min(hist.history['loss'])
         
 from numpy import ones,zeros
-def LoadModel(weights,hyper):
+def LoadModel(where,hyper):
     """Loads a pre-trained model with n curves located at weights = path/to/weights.hdf5"""
     sess=Session()
     with sess.as_default():
@@ -297,7 +298,7 @@ def LoadModel(weights,hyper):
                   model.layers[1].s,
                   model.layers[1].B]
             model.compile(optimizer=Adam(),loss='mse')
-            model.load_weights(weights)
+            model.load_weights(where)
             
             #Extract optimized weights into a dictionary
             BroutePrms = model.layers[1].get_weights()
@@ -366,6 +367,7 @@ def FeatureDict(PRMS,names,dfs,steqs=['0.9'],exponent = 2):
 
     #So you will end up indexing like this:  X[Steq][s1] gives all x values for event 1 on this stoichiometry
     for Steq in steqs:
+        Steq = Steq[2:]
         X[Steq],Y[Steq] = {},{}  #For each Steq, each dict will contain a list for each event (s1,s2...)
         for i in range(6):
             X[Steq][f's{i}'],Y[Steq][f's{i}'] = [],[]
@@ -500,3 +502,16 @@ def plot_wr(df,prms,hyper):
     
     pts = vstack([hyper[0,:],NewYPts])
     plot_f(df,prms,pts)
+
+
+#Train N models for data: df with hyperparapeters "hyper"
+def TrainNModels(df,hyper,lr=5e-1,epochs=500,N=10,where='/tmp/W{}.hdf5',peakRule=lambda x: 0.3+rand()*0.7):
+    """where: should be passed as a formateable string such as W{}.hdf5, so the program can add an index there.
+    peakRule: function. How should be peak height sampled for each train? Examples: lambda x: 0.4 + 0.6*i"""
+    for i in range(N):
+        pk0 = max(df.y) + peakRule(i)
+        print(f"Training model {i}...")
+        FilePath = where.format(i)
+        prms,loss=Optimize(df,hyper,peak=pk0,lr=lr,epochs=epochs,v=0,where=FilePath)      
+        plot_wr(df,prms,hyper)
+        print(f"Cost = {loss}")
