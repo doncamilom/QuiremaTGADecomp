@@ -50,10 +50,10 @@ def LoadDF(name,dom=(210,400),weight=(-0.3,1.6,0.3)):
     df.columns = ['t','x','W','y']
     
     dfn,norm_prms = normalize(df)
-    dfR=weigh(dfn,0.5,Range=(0.0,1e-5))
-    dfR=weigh(dfR,weight[2],Range=(weight[0],weight[1]))
+    #dfR=weigh(dfn,0.5,Range=(0.0,1e-5))
+    #dfR=weigh(dfR,weight[2],Range=(weight[0],weight[1]))
 
-    return dfR,norm_prms
+    return dfn,norm_prms
 
         
 #Create custom layer. This layer computes our function. This is done so we can compile a TF model -> easy to train
@@ -168,7 +168,7 @@ def CostFunction(prms,hyper,peak):
             Cost=0
             for i in range(len(Ss)):
                 dif_sq = (S[i] - Ss[i])**2
-                Cost+=cond(dif_sq > dev_pts[i], lambda: 30*dif_sq,lambda: 0.)
+                Cost+=cond(dif_sq > dev_pts[i], lambda: 30*(dif_sq+0.8),lambda: 0.)
             return Cost
     
         #Set each function to have a specific orientation
@@ -263,13 +263,13 @@ def Optimize(df,hyper,peak,lr=5e-2,epochs=100,v=1,weights=0,where='/tmp/W.hdf5')
                 model.load_weights(weights)
 
             #Callbacks
-            rlr = callbacks.ReduceLROnPlateau(monitor='loss', factor=0.5,patience=20,min_delta=0.004,
+            rlr = callbacks.ReduceLROnPlateau(monitor='loss', factor=0.5,patience=10,min_delta=0.004,
                                                   min_lr=2.0e-7, mode='min', verbose=v)
             ton = EndOnNaN()
             chk = callbacks.ModelCheckpoint(where, monitor='loss',save_best_only=True,
                                                 mode='min', period=1)
-            earlyStp = callbacks.EarlyStopping(monitor='loss', min_delta=0.000003, 
-                                                   patience=50, verbose=1, mode='min')
+            earlyStp = callbacks.EarlyStopping(monitor='loss', min_delta=0.00003, 
+                                                   patience=25, verbose=1, mode='min')
 
             hist=model.fit(df.x,df.y,epochs=epochs, batch_size=128,verbose=v,
                            callbacks=[rlr,ton,chk,earlyStp])
@@ -309,44 +309,45 @@ from scipy.signal import find_peaks
 from pandas import read_csv
 from numpy import convolve,ones,diff
 
-def TransferHyper(df,hyper,CurvePeak = [1,3]):
+def TransferHyper(df,hyper):
     """Returns the whole "hyper" array based on an initial model,
-    transforming it according to the derivatives of this new dataset
-    IMPORTANT! CurvePeak: Which curves are responsible for the LARGEST peak? Drop here 2 indices.
-    For La0.9, CurvePeak = [1,3] but for others it might be [1,4]"""
+    transforming it according to the derivatives of this new dataset"""
     def smooth(y, box_pts=30):
         box = ones(box_pts)/box_pts
         y_smooth = convolve(y, box, mode='same')
         return y_smooth
-    deriv = diff(df.y)/diff(df.x)
-    deriv = smooth(deriv,50)
-    
-    peak1 = find_peaks(deriv,height=5)
-    pkX1 = df.x[peak1[0][peak1[1]['peak_heights'].argmax()]]  #Get x-value of first (up) peak
-    
-    peak2 = find_peaks(-deriv,height=10,distance=50)
-    index = array(sorted(zip(peak2[1]['peak_heights'],peak2[0]),key=lambda x : x[0])[-2:])[:,1]
-    pkX2 = sorted(df.x[index].values)  #Get x-values of doublet peaks
 
+    deriv = diff(df.y)/diff(df.x)
+    deriv = smooth(deriv,30)
+
+    peak1 = find_peaks(deriv,height=5,prominence=1)[0][0]
+    pk = df.x.iloc[peak1]
+
+    peak2 = find_peaks(-deriv,height=0.35,prominence=0.2)[0]
+    pk1,pk2 = df.x.iloc[peak2].values
+                    
     Svals = hyper[0,:]
     
-    #Reescale the other peaks. Bring them to feasible values given those for the new peaks.
-    x1,x2 = pkX1,pkX2[-1]
-    m = (x2-x1)/(Svals[CurvePeak[1]]-Svals[CurvePeak[0]])  #Mult. constant
-    b = x2 - m * Svals[CurvePeak[1]]   #Sum. constant
+    #Reescale the other peaks. Bring them to feasible values according to those for the new peaks.
+    x1,x2 = pk,pk1
+    m = (x2-x1)/(Svals[3]-Svals[1])  #Mult. constant
+    b = x2 - m * Svals[3]   #Sum. constant
     newS = []
     for xi in Svals:
         newS.append(m*xi + b)
-        
-    #Set new S value
-    hyper[0,:] = newS
     
-    for i in range(hyper.shape[1]):
-        ki = hyper[3,i]
+    newS[5] = pk2  #Fix position of second peak
+        
+    newHyp = hyper.copy()
+    #Set new S value
+    newHyp[0,:] = newS
+    
+    for i in range(newHyp.shape[1]):
+        ki = newHyp[3,i]
         if ki > 60.:
             #Rescale k vals to ensure numerical stability
-            hyper[3,i] = hyper[3,i]*0.75 
-    return hyper.copy()
+            newHyp[3,i] = newHyp[3,i]*0.75 
+    return newHyp
 
 def BuildHyperFromModel(prms,hyper):
     """N = number of curves.
@@ -432,7 +433,7 @@ def PlotLinearModels(X,Y,save=False,xlims=False):
     
 #Plot functions. This will need modifications
 from numpy import diff
-def plot_derivs(df,prms,n):
+def plot_derivs(df,prms=False,n=6):
     deriv = diff(df.y)/diff(df.x)
     
     fig,ax=subplots(figsize=(15,10))
@@ -440,14 +441,16 @@ def plot_derivs(df,prms,n):
     
     ax.set_xlabel('T/C')
     ax.set_ylabel('Weight derivative/ % T$^{-1}$')
-    pred_deriv = 0
-    for i in range(n):
-        A,k,s = prms[f'A{i}'],prms[f'k{i}'],prms[f's{i}']      
-        
-        expc = np_exp(k*(df.x-s)) #Exponential term
-        func_i = -A*k*expc/(expc+1)**2
-        pred_deriv += func_i
-        ax.plot(df.x,func_i,'-.')
+    
+    if prms:
+        pred_deriv = 0
+        for i in range(n):
+            A,k,s = prms[f'A{i}'],prms[f'k{i}'],prms[f's{i}']      
+
+            expc = np_exp(k*(df.x-s)) #Exponential term
+            func_i = -A*k*expc/(expc+1)**2
+            pred_deriv += func_i
+            ax.plot(df.x,func_i,'-.')
     
     ax.grid()
     #ax.set_xlim(300,1000)
@@ -515,3 +518,38 @@ def TrainNModels(df,hyper,lr=5e-1,epochs=500,N=10,where='/tmp/W{}.hdf5',peakRule
         prms,loss=Optimize(df,hyper,peak=pk0,lr=lr,epochs=epochs,v=0,where=FilePath)      
         plot_wr(df,prms,hyper)
         print(f"Cost = {loss}")
+        
+        
+#Get restrictions
+from matplotlib.pyplot import subplots,plot,close,tight_layout,show
+def GetPoints(dfx,dfy):
+    fig,ax = subplots(figsize=(8,3),sharex=True)
+
+    def onclick(event):  
+        if event.button == 1:
+            x,y = event.xdata, event.ydata
+            points.append(x) 
+            ax.plot(x,y, 'rx')
+        if event.button == 3:
+            ax[0].lines.pop(-1)
+            points.pop(-1)
+            sign.pop(-1)
+    def press(event):
+        if event.key == 'enter':
+            close(fig)
+        if event.key == '1':
+            sign.append(1)
+        if event.key == '0':
+            sign.append(-1)
+            
+    points = []
+    sign = []
+
+    cid = fig.canvas.mpl_connect('button_press_event', onclick)
+    fig.canvas.mpl_connect('key_press_event', press)
+
+    ax.plot(dfx,dfy,'k-')
+
+    tight_layout()
+    show()
+    return points
