@@ -362,7 +362,7 @@ def BuildHyperFromModel(prms,hyper):
 
 from numpy import log
 
-def FeatureDict(PRMS,names,dfs,steqs=['0.9'],exponent = 2):
+def FeatureDict(PRMS,names,dfs,steqs=['La0.9'],exponent = 2):
     X = {}  #Each dict will contain one dict for each Steq
     Y = {}
 
