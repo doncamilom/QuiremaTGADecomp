@@ -10,3 +10,5 @@ Once this encoding has been made it is fairly easy to take advantage of all of t
 In the end, this encoding looks like a traditional neural network with a single layer. 
 
 All encoded parameters have a direct physical interpretation, so that the power of this method lies in the interpretability of the NN instead of its performance as a black-box. 
+
+![gif](LatinXChem/TGA_Model_LatinXChem_GIF.gif)
