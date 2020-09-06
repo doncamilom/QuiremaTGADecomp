@@ -11,4 +11,9 @@ In the end, this encoding looks like a traditional neural network with a single 
 
 All encoded parameters have a direct physical interpretation, so that the power of this method lies in the interpretability of the NN instead of its performance as a black-box. 
 
+# Here is the high resolution poster for the 2020 #LatinXChem
+![img](LatinXChem/TGA_Model_LatinXChem_HR.jpg)
+
+# And the animated gif 
+
 ![gif](LatinXChem/TGA_Model_LatinXChem_GIF.gif)
